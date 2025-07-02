@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Parental</title>
+    <!-- Tailwind CSS CDN para el estilo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        /* Animaciones para una mejor experiencia de usuario */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .animate-fade-in-up {
+            animation: fadeInUp 0.5s ease-out forwards;
+        }
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-sky-200 p-4">
+    <div id="app-root" class="min-h-screen bg-sky-200 p-4 font-inter">
+        <header class="bg-white bg-opacity-70 backdrop-blur-sm rounded-lg shadow-md p-4 mb-6 flex justify-between items-center flex-wrap gap-2">
+            <h1 class="text-2xl font-bold text-gray-800">Control Parental</h1>
+            <div id="user-id-display" class="text-sm text-gray-600 hidden">
+                <!-- El ID de usuario ya no es relevante sin autenticación de Firebase, se oculta por defecto. -->
+            </div>
+        </header>
+
+        <div id="main-content">
+            <!-- El contenido de la aplicación (dashboard, perfiles de hijo, formularios) se renderizará aquí dinámicamente por JavaScript -->
+        </div>
+    </div>
+
+    <script type="module">
+        console.log("Aplicación de Control Parental (Sin Firebase) - Versión 2.5 (Promedio Comportamiento Corregido)");
+
+        // --- Variables de Estado Globales (en memoria) ---
+        // Estas variables ahora almacenan los datos directamente en la memoria del navegador.
+        // Los datos se perderán al recargar o cerrar la página.
+        let children = []; // Lista de perfiles de hijos. Cada hijo tendrá una propiedad 'behaviorRecords'.
+        let selectedChild = null; // El hijo actualmente seleccionado para ver su perfil.
+        let currentPage = 'dashboard'; // Controla qué vista se muestra ('dashboard', 'childProfile', 'addChildren').
+        let currentCalendarMonth = new Date(); // Para la navegación del calendario.
+
+        // Simula un ID de usuario fijo o generado, ya que no hay autenticación de Firebase.
+        // Este ID se usa para mantener la estructura de datos simulada coherente.
+        const userId = "simulated_user_id"; // No se usa activamente en la lógica de la app sin Firebase, pero se mantiene para consistencia.
+
+        // --- Funciones de Utilidad ---
+
+        /**
+         * Genera un ID único simple para nuevos registros.
+         * En un entorno real, esto sería gestionado por la base de datos.
+         * @returns {string} Un ID único.
+         */
+        const generateUniqueId = () => {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0,
+                      v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        };
+
+        /**
+         * Muestra un modal de mensaje personalizado.
+         * @param {string} title - El título del modal.
+         * @param {string} message - El mensaje a mostrar.
+         */
+        const showMessage = (title, message) => {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+            modal.innerHTML = `
+                <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                    <h3 class="text-lg font-bold mb-4">${title}</h3>
+                    <p class="text-gray-700 mb-6">${message}</p>
+                    <button id="modal-close-button" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline">Cerrar</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            document.getElementById('modal-close-button').onclick = () => {
+                document.body.removeChild(modal);
+            };
+        };
+
+        /**
+         * Muestra un modal de confirmación personalizado.
+         * @param {string} title - El título del modal.
+         * @param {string} message - El mensaje a mostrar.
+         * @param {function} onConfirm - Función a ejecutar si el usuario confirma.
+         * @param {function} onCancel - Función a ejecutar si el usuario cancela.
+         */
+        const renderConfirmationModal = (title, message, onConfirm, onCancel) => {
+            const modalContainer = document.createElement('div');
+            modalContainer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+            modalContainer.innerHTML = `
+                <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                    <h3 class="text-lg font-bold mb-4">${title}</h3>
+                    <p class="text-gray-700 mb-6">${message}</p>
+                    <div class="flex justify-around">
+                        <button id="confirm-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline">Confirmar</button>
+                        <button id="cancel-button" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg focus:outline-none focus:shadow-outline">Cancelar</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modalContainer);
+
+            document.getElementById('confirm-button').onclick = () => {
+                onConfirm();
+                document.body.removeChild(modalContainer);
+            };
+            document.getElementById('cancel-button').onclick = () => {
+                onCancel();
+                document.body.removeChild(modalContainer);
+            };
+        };
+
+        // --- Lógica Principal de la Aplicación ---
+
+        /**
+         * Renderiza la interfaz de usuario principal de la aplicación.
+         * Se llama cada vez que el estado global de la aplicación (currentPage) cambia.
+         */
+        function renderApp() {
+            const mainContent = document.getElementById('main-content');
+            if (!mainContent) return;
+
+            mainContent.innerHTML = ''; // Limpia el contenido anterior
+
+            // La app siempre está "lista" ya que no hay dependencias externas de carga/autenticación.
+            if (currentPage === 'dashboard') {
+                renderDashboard(mainContent);
+            } else if (currentPage === 'childProfile' && selectedChild) {
+                renderChildProfile(mainContent, selectedChild);
+            } else if (currentPage === 'addChildren') {
+                renderAddChildForm(mainContent);
+            }
+        }
+
+        // --- Componente Dashboard ---
+        /**
+         * Renderiza la vista del dashboard con la lista de hijos.
+         * @param {HTMLElement} container - El elemento DOM donde se renderizará el dashboard.
+         */
+        function renderDashboard(container) {
+            const dashboardHtml = `
+                <div class="bg-white bg-opacity-80 rounded-lg shadow-xl p-6 md:p-8 max-w-4xl mx-auto">
+                    <h2 class="text-xl md:text-2xl font-semibold text-gray-800 mb-6">Perfiles de Hijos</h2>
+                    <div id="children-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                        <!-- Las tarjetas de hijos se insertarán aquí -->
+                    </div>
+                    <button id="add-child-button"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                        Añadir Nuevo Hijo
+                    </button>
+                </div>
+            `;
+            container.innerHTML = dashboardHtml;
+
+            const childrenGrid = document.getElementById('children-grid');
+            if (children.length > 0) {
+                children.forEach(child => {
+                    const childCard = document.createElement('div');
+                    childCard.className = "bg-blue-100 border border-blue-200 rounded-lg p-5 flex flex-col items-center shadow-md hover:shadow-lg transition-shadow duration-300 cursor-pointer";
+                    childCard.innerHTML = `
+                        <img src="${child.photoURL || `https://placehold.co/100x100/AEC6CF/FFFFFF?text=${child.name.charAt(0).toUpperCase()}`}"
+                            alt="${child.name}"
+                            class="w-24 h-24 rounded-full object-cover mb-4 border-2 border-blue-400 shadow-sm"
+                            onerror="this.src='https://placehold.co/100x100/AEC6CF/FFFFFF?text=${child.name.charAt(0).toUpperCase()}'"
+                        />
+                        <h3 class="text-lg font-bold text-gray-900 mb-1">${child.name}</h3>
+                        <p class="text-sm text-gray-600">Edad: ${new Date().getFullYear() - new Date(child.dob).getFullYear()}</p>
+                    `;
+                    childCard.addEventListener('click', () => {
+                        selectedChild = child;
+                        currentPage = 'childProfile';
+                        renderApp(); // Vuelve a renderizar la aplicación para mostrar el perfil del hijo
+                    });
+                    childrenGrid.appendChild(childCard);
+                });
+            } else {
+                childrenGrid.innerHTML = `<p class="col-span-full text-center text-gray-600">No hay perfiles de hijos. ¡Añade uno!</p>`;
+            }
+
+            document.getElementById('add-child-button').addEventListener('click', () => {
+                currentPage = 'addChildren';
+                renderApp(); // Vuelve a renderizar la aplicación para mostrar el formulario de añadir hijo
+            });
+        }
+
+        // --- Componente Add/Edit Child Form ---
+        /**
+         * Renderiza el formulario para añadir o editar un perfil de hijo.
+         * @param {HTMLElement} container - El elemento DOM donde se renderizará el formulario.
+         * @param {Object} [childToEdit=null] - Objeto hijo a editar, si es modo edición.
+         */
+        function renderAddChildForm(container, childToEdit = null) {
+            const isEditMode = !!childToEdit;
+            const formHtml = `
+                <div class="bg-white bg-opacity-80 rounded-lg shadow-xl p-6 md:p-8 max-w-lg mx-auto">
+                    <h2 class="text-xl md:text-2xl font-semibold text-gray-800 mb-6">${isEditMode ? 'Editar Perfil del Hijo' : 'Añadir Nuevo Hijo'}</h2>
+                    <form id="child-form" class="space-y-4">
+                        <div>
+                            <label for="name" class="block text-gray-700 text-sm font-bold mb-2">
+                                Nombre del Hijo:
+                            </label>
+                            <input
+                                type="text"
+                                id="name"
+                                value="${childToEdit ? childToEdit.name : ''}"
+                                class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                placeholder="Ej. Juanito"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label for="dob" class="block text-gray-700 text-sm font-bold mb-2">
+                                Fecha de Nacimiento:
+                            </label>
+                            <input
+                                type="date"
+                                id="dob"
+                                value="${childToEdit ? childToEdit.dob : ''}"
+                                class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label for="photoURL" class="block text-gray-700 text-sm font-bold mb-2">
+                                URL de la Foto (opcional):
+                            </label>
+                            <input
+                                type="url"
+                                id="photoURL"
+                                value="${childToEdit ? childToEdit.photoURL : ''}"
+                                class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                placeholder="https://ejemplo.com/foto.jpg"
+                            />
+                        </div>
+                        <p id="form-error" class="text-red-500 text-sm italic hidden"></p>
+                        <div class="flex justify-end gap-4 mt-6">
+                            <button type="button" id="cancel-child-button"
+                                class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out">
+                                Cancelar
+                            </button>
+                            <button type="submit" id="save-child-button"
+                                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out flex items-center gap-2">
+                                <span id="save-child-loading-spinner" class="hidden animate-spin h-5 w-5 text-white">
+                                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                </span>
+                                <span id="save-child-button-text">${isEditMode ? 'Actualizar Perfil' : 'Añadir Hijo'}</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            container.innerHTML = formHtml;
+
+            const nameInput = document.getElementById('name');
+            const dobInput = document.getElementById('dob');
+            const photoURLInput = document.getElementById('photoURL');
+            const formError = document.getElementById('form-error');
+            const saveButton = document.getElementById('save-child-button');
+            const saveButtonText = document.getElementById('save-child-button-text');
+            const saveButtonSpinner = document.getElementById('save-child-loading-spinner');
+
+            document.getElementById('child-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                formError.classList.add('hidden');
+                formError.textContent = '';
+
+                const name = nameInput.value;
+                const dob = dobInput.value;
+                const photoURL = photoURLInput.value;
+
+                if (!name || !dob) {
+                    formError.textContent = 'Por favor, completa todos los campos requeridos.';
+                    formError.classList.remove('hidden');
+                    return;
+                }
+
+                saveButton.disabled = true;
+                saveButtonSpinner.classList.remove('hidden');
+                saveButtonText.textContent = 'Guardando...';
+
+                try {
+                    const newChildData = {
+                        id: childToEdit ? childToEdit.id : generateUniqueId(),
+                        name,
+                        dob,
+                        photoURL,
+                        behaviorRecords: childToEdit ? childToEdit.behaviorRecords : [] // Mantener registros existentes o inicializar
+                    };
+
+                    if (isEditMode) {
+                        // Actualizar hijo en la lista global de hijos
+                        const childIndex = children.findIndex(c => c.id === newChildData.id);
+                        if (childIndex !== -1) {
+                            children[childIndex] = newChildData;
+                            showMessage("Éxito", "Perfil del hijo actualizado correctamente.");
+                        } else {
+                            throw new Error("Hijo no encontrado para actualizar.");
+                        }
+                        selectedChild = newChildData; // Actualiza el hijo seleccionado
+                        currentPage = 'childProfile'; // Vuelve al perfil del hijo después de actualizar
+                    } else {
+                        // Añadir nuevo hijo a la lista global
+                        children.push(newChildData);
+                        showMessage("Éxito", "Perfil del hijo añadido correctamente.");
+                        currentPage = 'dashboard';
+                    }
+                    renderApp(); // Vuelve a renderizar la aplicación para reflejar los cambios
+                } catch (err) {
+                    console.error("Error al añadir/actualizar hijo:", err);
+                    formError.textContent = `Error al guardar el perfil: ${err.message}`;
+                    formError.classList.remove('hidden');
+                } finally {
+                    saveButton.disabled = false;
+                    saveButtonSpinner.classList.add('hidden');
+                    saveButtonText.textContent = isEditMode ? 'Actualizar Perfil' : 'Añadir Hijo';
+                }
+            });
+
+            document.getElementById('cancel-child-button').addEventListener('click', () => {
+                // Si es modo edición, regresa al perfil del hijo, de lo contrario, al dashboard
+                currentPage = isEditMode ? 'childProfile' : 'dashboard';
+                renderApp();
+            });
+        }
+
+        // --- Componente Child Profile View ---
+        /**
+         * Renderiza la vista detallada del perfil de un hijo.
+         * @param {HTMLElement} container - El elemento DOM donde se renderizará el perfil.
+         * @param {Object} child - El objeto hijo cuyos detalles se mostrarán.
+         */
+        function renderChildProfile(container, child) {
+            const profileHtml = `
+                <div class="bg-white bg-opacity-80 rounded-lg shadow-xl p-6 md:p-8 max-w-4xl mx-auto">
+                    <div class="flex items-center mb-6">
+                        <button id="back-button"
+                            class="flex items-center text-blue-600 hover:text-blue-800 font-semibold transition duration-300 mr-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                            </svg>
+                            Volver
+                        </button>
+                        <img src="${child.photoURL || `https://placehold.co/80x80/AEC6CF/FFFFFF?text=${child.name.charAt(0).toUpperCase()}`}"
+                            alt="${child.name}"
+                            class="w-20 h-20 rounded-full object-cover mr-4 border-2 border-blue-400 shadow-sm"
+                            onerror="this.src='https://placehold.co/80x80/AEC6CF/FFFFFF?text=${child.name.charAt(0).toUpperCase()}'"
+                        />
+                        <h2 class="text-xl md:text-2xl font-bold text-gray-800">${child.name}</h2>
+                    </div>
+
+                    <div class="flex justify-end gap-4 mb-6">
+                        <button id="edit-profile-button"
+                            class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300">
+                            Editar Perfil
+                        </button>
+                        <button id="delete-profile-button"
+                            class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300">
+                            Eliminar Perfil
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div id="behavior-calendar-container">
+                            <h3 class="text-xl font-semibold text-gray-800 mb-4">Registro de Comportamiento</h3>
+                            <!-- El calendario se renderizará aquí -->
+                        </div>
+                        <div id="behavior-statistics-container">
+                            <h3 class="text-xl font-semibold text-gray-800 mb-4">Estadísticas de Comportamiento</h3>
+                            <!-- Las estadísticas se renderizarán aquí -->
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.innerHTML = profileHtml;
+
+            // Manejadores de eventos
+            document.getElementById('back-button').addEventListener('click', () => {
+                currentPage = 'dashboard';
+                selectedChild = null; // Limpia el hijo seleccionado
+                renderApp();
+            });
+
+            document.getElementById('edit-profile-button').addEventListener('click', () => {
+                // Abre el formulario de añadir/editar hijo en un modal simple
+                const modalContainer = document.createElement('div');
+                modalContainer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+                document.body.appendChild(modalContainer);
+
+                // Renderiza el formulario de edición dentro del modal
+                renderAddChildForm(modalContainer, child);
+                const closeEditModal = () => document.body.removeChild(modalContainer);
+
+                // Sobrescribe los manejadores de cancelar/guardar del formulario para cerrar el modal
+                document.getElementById('cancel-child-button').onclick = closeEditModal;
+                const formElement = document.getElementById('child-form');
+                formElement.onsubmit = async (e) => {
+                    e.preventDefault(); // Previene la recarga por defecto
+                    const nameInput = document.getElementById('name');
+                    const dobInput = document.getElementById('dob');
+                    const photoURLInput = document.getElementById('photoURL');
+                    const formError = document.getElementById('form-error');
+
+                    const name = nameInput.value;
+                    const dob = dobInput.value;
+                    const photoURL = photoURLInput.value;
+
+                    if (!name || !dob) {
+                        formError.textContent = 'Por favor, completa todos los campos requeridos.';
+                        formError.classList.remove('hidden');
+                        return;
+                    }
+
+                    // Actualiza el hijo en la lista global
+                    const updatedChildData = { ...child, name, dob, photoURL };
+                    const childIndex = children.findIndex(c => c.id === updatedChildData.id);
+                    if (childIndex !== -1) {
+                        children[childIndex] = updatedChildData;
+                    }
+
+                    showMessage("Éxito", "Perfil del hijo actualizado correctamente.");
+                    selectedChild = updatedChildData; // Actualiza el hijo seleccionado
+                    closeEditModal(); // Cierra el modal solo si el guardado fue exitoso
+                    renderApp(); // Re-renderiza para actualizar el perfil en la vista
+                };
+            });
+
+
+            document.getElementById('delete-profile-button').addEventListener('click', () => {
+                renderConfirmationModal(
+                    "Confirmar Eliminación",
+                    `¿Estás seguro de que quieres eliminar el perfil de ${child.name}? Esta acción es irreversible y también eliminará sus registros de comportamiento.`,
+                    async () => {
+                        // Elimina el hijo de la lista global de hijos
+                        children = children.filter(c => c.id !== child.id);
+                        showMessage("Éxito", "Hijo y sus registros de comportamiento eliminados correctamente.");
+                        currentPage = 'dashboard';
+                        selectedChild = null;
+                        renderApp(); // Vuelve al dashboard después de eliminar
+                    },
+                    () => { /* Acción de cancelar, no hace nada */ }
+                );
+            });
+
+            // Como no hay onSnapshot, renderizamos directamente con los registros del hijo
+            // que están en la memoria.
+            renderBehaviorCalendar(document.getElementById('behavior-calendar-container'), selectedChild.behaviorRecords || []); // Usar selectedChild para los registros
+            renderBehaviorStatistics(document.getElementById('behavior-statistics-container'), selectedChild.behaviorRecords || []); // Usar selectedChild para los registros
+        }
+
+        // --- Componente Behavior Calendar ---
+        /**
+         * Renderiza el calendario de comportamiento para un mes dado.
+         * @param {HTMLElement} container - El elemento DOM donde se renderizará el calendario.
+         * @param {Array<Object>} behaviorRecords - Registros de comportamiento del hijo.
+         */
+        function renderBehaviorCalendar(container, behaviorRecords) {
+            const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+            const dayNames = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+            const totalDays = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() + 1, 0).getDate();
+            const firstDay = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth(), 1).getDay(); // 0 para domingo, 1 para lunes
+            const adjustedFirstDay = (firstDay === 0) ? 6 : firstDay - 1; // Ajusta para que la semana empiece en lunes
+
+            let calendarDaysHtml = '';
+            // Espacios en blanco para los días iniciales del mes
+            for (let i = 0; i < adjustedFirstDay; i++) {
+                calendarDaysHtml += `<div class="p-2"></div>`;
+            }
+
+            // Mapeo de tipos de comportamiento a valores numéricos
+            const behaviorScores = {
+                'Bueno': 1,
+                'Regular': 0,
+                'Equivocado': -1
+            };
+
+            // Días del mes
+            for (let day = 1; day <= totalDays; day++) {
+                const date = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth(), day);
+                const dateString = date.toISOString().split('T')[0]; // Formato YYYY-MM-DD
+                const dailyRecords = behaviorRecords.filter(record => record.date === dateString);
+
+                let bgColor = 'bg-white';
+                let icon = null;
+
+                if (dailyRecords.length > 0) {
+                    // Calcular la puntuación total del día
+                    const totalDailyScore = dailyRecords.reduce((sum, record) => sum + (behaviorScores[record.type] || 0), 0);
+
+                    if (totalDailyScore > 0) {
+                        bgColor = 'bg-green-200';
+                        icon = '😀'; // Carita feliz
+                    } else if (totalDailyScore === 0) {
+                        bgColor = 'bg-yellow-200';
+                        icon = '😐'; // Carita neutral
+                    } else { // totalDailyScore < 0
+                        bgColor = 'bg-red-200';
+                        icon = '😠'; // Carita de enojo
+                    }
+                }
+
+                const today = new Date();
+                const isToday = date.toDateString() === today.toDateString();
+
+                calendarDaysHtml += `
+                    <div class="p-2 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-blue-100 transition-colors duration-200 ${bgColor} ${isToday ? 'border-2 border-blue-500 shadow-md' : ''}"
+                         data-date="${dateString}">
+                        <span class="font-medium text-gray-800">${day}</span>
+                        ${icon ? `<span class="text-xl mt-1">${icon}</span>` : ''}
+                    </div>
+                `;
+            }
+
+            const calendarHtml = `
+                <div class="bg-blue-50 p-4 rounded-lg shadow-inner">
+                    <div class="flex justify-between items-center mb-4">
+                        <button id="prev-month-button" class="p-2 rounded-full hover:bg-blue-200">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                            </svg>
+                        </button>
+                        <h4 class="text-lg font-semibold text-blue-800">
+                            ${monthNames[currentCalendarMonth.getMonth()]} ${currentCalendarMonth.getFullYear()}
+                        </h4>
+                        <button id="next-month-button" class="p-2 rounded-full hover:bg-blue-200">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-7 text-center text-sm font-semibold text-gray-600 mb-2">
+                        ${dayNames.map(day => `<div class="py-2">${day}</div>`).join('')}
+                    </div>
+                    <div class="grid grid-cols-7 gap-1">
+                        ${calendarDaysHtml}
+                    </div>
+                </div>
+            `;
+            container.innerHTML = calendarHtml;
+
+            // Añade manejadores de eventos a cada celda de día
+            container.querySelectorAll('[data-date]').forEach(dayDiv => {
+                dayDiv.addEventListener('click', () => {
+                    const date = new Date(dayDiv.dataset.date + 'T12:00:00Z'); // Añade hora para evitar problemas de zona horaria
+                    const recordsForDate = selectedChild.behaviorRecords.filter(record => record.date === dayDiv.dataset.date);
+                    renderBehaviorFormModal(date, recordsForDate);
+                });
+            });
+
+            // Manejadores para cambiar de mes
+            document.getElementById('prev-month-button').addEventListener('click', () => {
+                currentCalendarMonth.setMonth(currentCalendarMonth.getMonth() - 1);
+                renderApp(); // Vuelve a renderizar toda la aplicación para actualizar el calendario
+            });
+            document.getElementById('next-month-button').addEventListener('click', () => {
+                currentCalendarMonth.setMonth(currentCalendarMonth.getMonth() + 1);
+                renderApp(); // Vuelve a renderizar toda la aplicación para actualizar el calendario
+            });
+        }
+
+
+        // --- Componente Behavior Form Modal ---
+        /**
+         * Renderiza el modal para registrar o ver comportamientos diarios.
+         * @param {Date} selectedDate - La fecha seleccionada en el calendario.
+         * @param {Array<Object>} dailyRecords - Registros de comportamiento para la fecha seleccionada.
+         */
+        function renderBehaviorFormModal(selectedDate, dailyRecords) {
+            const modalContainer = document.createElement('div');
+            modalContainer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50';
+            document.body.appendChild(modalContainer);
+
+            // Ordena los registros diarios por timestamp para una visualización consistente
+            const sortedDailyRecords = dailyRecords.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            let existingRecordsHtml = '';
+            if (sortedDailyRecords.length > 0) {
+                existingRecordsHtml = `
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4 max-h-48 overflow-y-auto">
+                        <h4 class="text-md font-semibold text-gray-800 mb-2">Comportamientos del día ya registrados:</h4>
+                        ${sortedDailyRecords.map(record => `
+                            <div class="border-b border-blue-100 last:border-b-0 py-2 flex justify-between items-center">
+                                <div>
+                                    <p class="text-lg font-bold text-blue-700">Tipo: ${record.type}</p>
+                                    <p class="text-gray-700 italic text-sm">Comentario: ${record.comment || 'Ninguno'}</p>
+                                    <p class="text-gray-500 text-xs mt-1">Hora: ${new Date(record.timestamp).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</p>
+                                </div>
+                                <button type="button" class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 transition-colors delete-record-button"
+                                    data-record-id="${record.id}" title="Eliminar registro">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            modalContainer.innerHTML = `
+                <div class="bg-white p-6 rounded-lg shadow-xl max-w-md w-full animate-fade-in-up">
+                    <h3 class="text-xl font-bold text-gray-800 mb-4">
+                        Registrar Comportamiento para ${selectedDate.toLocaleDateString('es-ES')}
+                    </h3>
+
+                    ${existingRecordsHtml}
+
+                    <form id="behavior-form" class="space-y-4">
+                        <div>
+                            <label class="block text-gray-700 text-sm font-bold mb-2">
+                                Tipo de Comportamiento (nuevo registro):
+                            </label>
+                            <div class="flex gap-3 flex-wrap">
+                                <button type="button" class="type-button py-2 px-4 rounded-lg font-semibold border-2 bg-green-100 text-green-700 border-green-200 hover:bg-green-200" data-type="Bueno">Bueno</button>
+                                <button type="button" class="type-button py-2 px-4 rounded-lg font-semibold border-2 bg-yellow-100 text-yellow-700 border-yellow-200 hover:bg-yellow-200" data-type="Regular">Regular</button>
+                                <button type="button" class="type-button py-2 px-4 rounded-lg font-semibold border-2 bg-red-100 text-red-700 border-red-200 hover:bg-red-200" data-type="Equivocado">Equivocado</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="comment-input" class="block text-gray-700 text-sm font-bold mb-2">
+                                Comentario (opcional para nuevo registro):
+                            </label>
+                            <textarea
+                                id="comment-input"
+                                rows="3"
+                                class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                placeholder="Añade detalles sobre el comportamiento..."
+                            ></textarea>
+                        </div>
+                        <p id="behavior-form-error" class="text-red-500 text-sm italic hidden"></p>
+                        <div class="flex justify-between gap-2 mt-6">
+                            <button type="button" id="close-behavior-modal"
+                                class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition duration-300">
+                                Cerrar
+                            </button>
+                            <button type="submit" id="add-behavior-record"
+                                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 flex items-center gap-2">
+                                <span id="behavior-loading-spinner" class="hidden animate-spin h-5 w-5 text-white">
+                                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                </span>
+                                Añadir Registro
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            // El modalContainer ya está en el DOM porque se añadió al principio de esta función.
+
+            let currentType = ''; // Estado local para el tipo de comportamiento seleccionado
+            const commentInput = modalContainer.querySelector('#comment-input');
+            const behaviorFormError = modalContainer.querySelector('#behavior-form-error');
+            const addButton = modalContainer.querySelector('#add-behavior-record');
+            const addSpinner = modalContainer.querySelector('#behavior-loading-spinner');
+
+            // Manejadores de eventos para los botones de tipo de comportamiento
+            modalContainer.querySelectorAll('.type-button').forEach(button => {
+                button.addEventListener('click', function() {
+                    // Restablece el estilo de todos los botones de tipo
+                    modalContainer.querySelectorAll('.type-button').forEach(btn => {
+                        const typeClass = btn.dataset.type;
+                        if (typeClass === 'Bueno') btn.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-green-100 text-green-700 border-green-200 hover:bg-green-200';
+                        if (typeClass === 'Regular') btn.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-yellow-100 text-yellow-700 border-yellow-200 hover:bg-yellow-200';
+                        if (typeClass === 'Equivocado') btn.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-red-100 text-red-700 border-red-200 hover:bg-red-200';
+                    });
+                    // Aplica el estilo al botón seleccionado
+                    currentType = this.dataset.type;
+                    const typeClass = this.dataset.type;
+                    if (typeClass === 'Bueno') this.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-green-500 text-white border-green-600';
+                    if (typeClass === 'Regular') this.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-yellow-500 text-gray-900 border-yellow-600';
+                    if (typeClass === 'Equivocado') this.className = 'type-button py-2 px-4 rounded-lg font-semibold border-2 bg-red-500 text-white border-red-600';
+                });
+            });
+
+            // Manejador para el envío del formulario de comportamiento
+            modalContainer.querySelector('#behavior-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                behaviorFormError.classList.add('hidden');
+                behaviorFormError.textContent = '';
+
+                if (!currentType) {
+                    behaviorFormError.textContent = 'Por favor, selecciona un tipo de comportamiento.';
+                    behaviorFormError.classList.remove('hidden');
+                    return;
+                }
+
+                addButton.disabled = true;
+                addSpinner.classList.remove('hidden');
+
+                try {
+                    const newRecord = {
+                        id: generateUniqueId(),
+                        childId: selectedChild.id,
+                        date: selectedDate.toISOString().split('T')[0], // Formato YYYY-MM-DD
+                        type: currentType,
+                        comment: commentInput.value,
+                        timestamp: new Date().toISOString(), // Para ordenar y seguimiento
+                    };
+
+                    // Añadir el nuevo registro al array de behaviorRecords del hijo seleccionado
+                    selectedChild.behaviorRecords = [...selectedChild.behaviorRecords, newRecord];
+
+                    // Actualizar el hijo en la lista global de hijos (en memoria)
+                    const childIndex = children.findIndex(c => c.id === selectedChild.id);
+                    if (childIndex !== -1) {
+                        children[childIndex] = selectedChild;
+                    }
+
+                    // Después de guardar, primero cierra el modal y luego re-renderiza la aplicación.
+                    modalContainer.remove(); // Cierra el modal actual del formulario
+                    renderApp(); // Re-renderiza la aplicación para que los cambios se reflejen.
+                    showMessage("Éxito", "Registro de comportamiento guardado."); // Muestra el mensaje de éxito sobre la interfaz actualizada.
+
+                } catch (err) {
+                    console.error("Error al guardar registro de comportamiento:", err);
+                    behaviorFormError.textContent = `Error al guardar el registro: ${err.message}`;
+                    behaviorFormError.classList.remove('hidden');
+                } finally {
+                    addButton.disabled = false;
+                    addSpinner.classList.add('hidden');
+                }
+            });
+
+            // Manejador para cerrar el modal de comportamiento
+            modalContainer.querySelector('#close-behavior-modal').addEventListener('click', () => {
+                modalContainer.remove();
+            });
+
+            // Manejadores para eliminar registros de comportamiento individuales
+            modalContainer.querySelectorAll('.delete-record-button').forEach(button => {
+                button.addEventListener('click', async function() {
+                    const recordIdToDelete = this.dataset.recordId; // Acceso correcto a dataset.recordId
+                    
+                    // Actualiza el estado de los botones mientras se procesa
+                    const allButtons = modalContainer.querySelectorAll('button');
+                    allButtons.forEach(btn => btn.disabled = true);
+                    addSpinner.classList.remove('hidden');
+
+                    try {
+                        // Eliminar el registro del array de behaviorRecords del hijo seleccionado
+                        selectedChild.behaviorRecords = selectedChild.behaviorRecords.filter(record => record.id !== recordIdToDelete);
+
+                        // Actualizar el hijo en la lista global de hijos (en memoria)
+                        const childIndex = children.findIndex(c => c.id === selectedChild.id);
+                        if (childIndex !== -1) {
+                            children[childIndex] = selectedChild;
+                        }
+
+                        // Después de eliminar, primero cierra el modal y luego re-renderiza la aplicación.
+                        modalContainer.remove(); // Cierra el modal actual del formulario
+                        renderApp(); // Re-renderiza la aplicación para que los cambios se reflejen.
+                        showMessage("Éxito", "Registro de comportamiento eliminado."); // Muestra el mensaje de éxito sobre la interfaz actualizada.
+
+                    } catch (err) {
+                        console.error("Error al eliminar registro de comportamiento:", err);
+                        showMessage("Error", `Error al eliminar el registro: ${err.message}`);
+                    } finally {
+                        allButtons.forEach(btn => btn.disabled = false);
+                        addSpinner.classList.add('hidden');
+                    }
+                });
+            });
+        }
+
+
+        // --- Componente Behavior Statistics ---
+        /**
+         * Renderiza las estadísticas de comportamiento.
+         * @param {HTMLElement} container - El elemento DOM donde se renderizarán las estadísticas.
+         * @param {Array<Object>} records - Todos los registros de comportamiento del hijo.
+         */
+        function renderBehaviorStatistics(container, records) {
+            // Filtro predeterminado a 'week' ya que 'day' fue eliminado.
+            let currentFilter = 'week'; 
+
+            // Función para calcular y renderizar las estadísticas según el filtro actual
+            const updateStatsDisplay = () => {
+                const now = new Date();
+                let filteredRecords = [];
+
+                records.forEach(record => {
+                    const recordDate = new Date(record.date);
+                    if (isNaN(recordDate.getTime())) { // Usa .getTime() para una validación más robusta
+                        console.warn(`Formato de fecha inválido para el registro: ${record.date}`);
+                        return;
+                    }
+
+                    // Eliminamos el filtro 'day'
+                    if (currentFilter === 'week') {
+                        // Inicio de la semana actual (Lunes)
+                        const startOfWeek = new Date(now);
+                        startOfWeek.setDate(now.getDate() - (now.getDay() === 0 ? 6 : now.getDay() - 1)); // Ajusta para que la semana comience en lunes
+                        startOfWeek.setHours(0, 0, 0, 0);
+
+                        // Fin de la semana actual (Domingo)
+                        const endOfWeek = new Date(startOfWeek);
+                        endOfWeek.setDate(startOfWeek.getDate() + 6);
+                        endOfWeek.setHours(23, 59, 59, 999);
+
+                        if (recordDate >= startOfWeek && recordDate <= endOfWeek) {
+                            filteredRecords.push(record);
+                        }
+                    } else if (currentFilter === 'month') {
+                        if (recordDate.getMonth() === now.getMonth() && recordDate.getFullYear() === now.getFullYear()) {
+                            filteredRecords.push(record);
+                        }
+                    } else if (currentFilter === 'year') {
+                        if (recordDate.getFullYear() === now.getFullYear()) {
+                            filteredRecords.push(record);
+                        }
+                    }
+                });
+
+                const counts = { Bueno: 0, Regular: 0, Equivocado: 0 };
+                filteredRecords.forEach(record => {
+                    if (counts.hasOwnProperty(record.type)) {
+                        counts[record.type]++;
+                    }
+                });
+
+                const total = filteredRecords.length;
+                const goodPercentage = total > 0 ? (counts.Bueno / total) * 100 : 0;
+                const regularPercentage = total > 0 ? (counts.Regular / total) * 100 : 0;
+                const wrongPercentage = total > 0 ? (counts.Equivocado / total) * 100 : 0;
+
+                const statsContentElement = document.getElementById('stats-content');
+                if (!statsContentElement) return;
+
+                statsContentElement.innerHTML = `
+                    <div class="space-y-4">
+                        ${total === 0 ? `
+                            <p class="text-center text-gray-600 py-4">No hay registros de comportamiento para este período.</p>
+                        ` : `
+                            <div class="flex items-center gap-3">
+                                <div class="w-1/4 text-gray-700 font-semibold">Bueno:</div>
+                                <div class="w-3/4 bg-green-300 rounded-full h-8 flex items-center overflow-hidden">
+                                    <div class="bg-green-600 h-full rounded-full text-white text-xs font-bold flex items-center justify-center transition-all duration-500 ease-out"
+                                        style="width: ${goodPercentage}%">
+                                        ${counts.Bueno > 0 ? `${goodPercentage.toFixed(0)}%` : ''}
+                                    </div>
+                                    ${counts.Bueno === 0 ? `<span class="pl-3 text-gray-800">${goodPercentage.toFixed(0)}%</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="w-1/4 text-gray-700 font-semibold">Regular:</div>
+                                <div class="w-3/4 bg-yellow-300 rounded-full h-8 flex items-center overflow-hidden">
+                                    <div class="bg-yellow-600 h-full rounded-full text-gray-900 text-xs font-bold flex items-center justify-center transition-all duration-500 ease-out"
+                                        style="width: ${regularPercentage}%">
+                                        ${counts.Regular > 0 ? `${regularPercentage.toFixed(0)}%` : ''}
+                                    </div>
+                                    ${counts.Regular === 0 ? `<span class="pl-3 text-gray-800">${regularPercentage.toFixed(0)}%</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="w-1/4 text-gray-700 font-semibold">Equivocado:</div>
+                                <div class="w-3/4 bg-red-300 rounded-full h-8 flex items-center overflow-hidden">
+                                    <div class="bg-red-600 h-full rounded-full text-white text-xs font-bold flex items-center justify-center transition-all duration-500 ease-out"
+                                        style="width: ${wrongPercentage}%">
+                                        ${counts.Equivocado > 0 ? `${wrongPercentage.toFixed(0)}%` : ''}
+                                    </div>
+                                    ${counts.Equivocado === 0 ? `<span class="pl-3 text-gray-800">${wrongPercentage.toFixed(0)}%</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="mt-6 pt-4 border-t border-gray-200 text-center text-lg font-bold text-gray-800">
+                                Total de Registros: ${total}
+                            </div>
+                        `}
+                    </div>
+                `;
+            };
+
+            // CAMBIO: Eliminamos el botón "Día"
+            const filterButtonsHtml = `
+                <div class="flex justify-around mb-4 bg-white p-2 rounded-lg shadow-sm">
+                    <button id="filter-week" class="py-2 px-4 rounded-lg font-semibold transition-colors duration-200">Semana</button>
+                    <button id="filter-month" class="py-2 px-4 rounded-lg font-semibold transition-colors duration-200">Mes</button>
+                    <button id="filter-year" class="py-2 px-4 rounded-lg font-semibold transition-colors duration-200">Año</button>
+                </div>
+                <div id="stats-content"></div> <!-- Contenedor para las estadísticas reales -->
+            `;
+            container.innerHTML = `<div class="bg-blue-50 p-4 rounded-lg shadow-inner">${filterButtonsHtml}</div>`;
+
+            // Añade manejadores de eventos para los botones de filtro
+            const filterButtons = container.querySelectorAll('.bg-white button');
+            filterButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    currentFilter = this.id.replace('filter-', ''); // Obtiene el filtro ('week', 'month', 'year')
+                    // Actualiza el estilo de los botones para indicar cuál está activo
+                    filterButtons.forEach(btn => {
+                        if (btn.id === `filter-${currentFilter}`) {
+                            btn.className = 'py-2 px-4 rounded-lg font-semibold transition-colors duration-200 bg-blue-500 text-white shadow-md';
+                        } else {
+                            btn.className = 'py-2 px-4 rounded-lg font-semibold transition-colors duration-200 text-blue-700 hover:bg-blue-100';
+                        }
+                    });
+                    updateStatsDisplay(); // Recalcula y renderiza las estadísticas con el nuevo filtro
+                });
+            });
+
+            // Establece el estado inicial del botón activo y muestra las estadísticas
+            // Esto simula un clic para que se aplique el estilo inicial y se rendericen las estadísticas
+            container.querySelector(`#filter-${currentFilter}`).click();
+        }
+
+
+        // --- Inicialización de la Aplicación (sin Firebase) ---
+        // Se ejecuta una vez que el DOM está completamente cargado
+        document.addEventListener('DOMContentLoaded', () => {
+            // La aplicación se considera lista inmediatamente.
+            // Ocultar la visualización del ID de usuario ya que no tiene sentido aquí.
+            const userIdDisplay = document.getElementById('user-id-display');
+            if (userIdDisplay) {
+                userIdDisplay.classList.add('hidden');
+            }
+            renderApp(); // Renderiza la aplicación.
+        });
+    </script>
+</body>
+</html>
